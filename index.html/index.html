@@ -1,0 +1,214 @@
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+    <title>Homepage</title>
+    <script src="script.js"></script>
+  </head>
+  <body>
+    <header>
+      <nav>
+        <a href="index.html">Homepage</a>
+      </nav>
+      <nav>
+        <a href="signup.html">Signup</a>
+        <a href="login.html">Login</a>
+        <a href="logout.html">Logout</a>
+      </nav>
+    </header>
+    <main>
+      <div class="error"></div>
+      <div class="message"></div>
+      <div id="schedule"></div>
+      <script>
+        let date = new Date();
+
+        renderSchedule(date);
+
+        async function renderSchedule(date) {
+          const user = await getCurrentUser();
+
+          if (user != null) {
+            document
+              .querySelector("[href='signup.html']")
+              .classList.add("hidden");
+            document
+              .querySelector("[href='login.html']")
+              .classList.add("hidden");
+          } else {
+            document
+              .querySelector("[href='logout.html']")
+              .classList.add("hidden");
+          }
+
+          // NOTE: Always clear old data at the top of your render function.
+          // Delete everything in the schedule div
+          document.querySelector("#schedule").innerHTML = "";
+          document.querySelector(".error").innerHTML = "";
+          document.querySelector(".message").innerHTML = "";
+
+          const previous = newElement(
+            `<button class="navButton">previous</button>`
+          );
+          previous.onclick = () => {
+            date.setDate(date.getDate() - 1);
+            renderSchedule(date);
+          };
+          const next = newElement(`<button class="navButton">next</button>`);
+          next.onclick = () => {
+            date.setDate(date.getDate() + 1);
+            renderSchedule(date);
+          };
+
+          document.querySelector("#schedule").append(previous, date, next);
+
+          const start = new Date(date);
+          start.setHours(0, 0, 0, 0);
+
+          const end = new Date(date);
+          end.setHours(23, 59, 59, 0);
+
+          const params = new URLSearchParams();
+          params.set("rangeStart", dateToMysqlFormat(start));
+          params.set("rangeEnd", dateToMysqlFormat(end));
+
+          const response = await fetch(
+            //                       ?rangeStart=2022-05-03 09:33:00&rangeEnd=2022-05-03 12:33:00
+            `api/get-reservations.php?${params.toString()}`,
+            {
+              method: "GET",
+              credentials: "include",
+            }
+          );
+
+          const reservations = await response.json();
+
+          for (let i = 0; i < 8; i++) {
+            const start = new Date(date);
+            start.setHours(i * 3, 0, 0, 0);
+
+            const end = new Date(date);
+            end.setHours(i * 3 + 3, 0, 0, 0);
+
+            // NOTE: This works for 1-11
+            let startHour = start.getHours() % 12;
+            let endHour = end.getHours() % 12;
+            let startSuffix = "AM";
+            let endSuffix = "AM";
+
+            if (start.getHours() >= 12) {
+              startSuffix = "PM";
+            }
+
+            if (end.getHours() >= 12) {
+              endSuffix = "PM";
+            }
+
+            // Fix it for 0 or 12
+            if (startHour == 0) {
+              startHour = 12;
+            }
+
+            // Fix it for 0 or 12
+            if (endHour == 0) {
+              endHour = 12;
+            }
+
+            const button = newElement(
+              `<button>${startHour}${startSuffix} - ${endHour}${endSuffix}</button>`
+            );
+            button.onclick = async () => {
+              document.querySelector(".error").innerHTML = "";
+              document.querySelector(".message").innerHTML = "";
+
+              const response = await fetch(`api/reserve-time.php`, {
+                // CRUD:    Create, Read, Update, Delete
+                // methods: POST    GET   PUT     DELETE
+                method: "POST",
+                body: JSON.stringify({
+                  start: dateToMysqlFormat(start),
+                  end: dateToMysqlFormat(end),
+                }),
+                // Tells the fetch to send cookies with this request.
+                // Sometimes this is not the default, but we NEED to
+                // send the PHPSESSID cookie to remember the user's session.
+                credentials: "include",
+              });
+
+              // response.ok is true for 2XX response codes. That tells you there was no error.
+              if (!response.ok) {
+                const data = await response.json();
+                document.querySelector(".error").innerHTML = data.message;
+
+                if (data.reservation) {
+                  document.querySelector(
+                    ".error"
+                  ).innerHTML += `</br>Current reservation: ${data.reservation.start}`;
+                }
+              } else {
+                // NOTE: Always re-render after doing a C, U, or D
+                renderSchedule(date);
+
+                const data = await response.json();
+                document.querySelector(".message").innerHTML = data.message;
+              }
+            };
+
+            const reservation = getReservationInRange(start, end, reservations);
+
+            if (reservation != null) {
+              button.disabled = true;
+              if (reservation.user_id == user.id) {
+                button.classList.add("reservedByCurrentUser");
+              }
+            }
+
+            document.querySelector("#schedule").append(button);
+          }
+        }
+
+        function getReservationInRange(start, end, reservations) {
+          // TODO:
+          // For each reservation...
+          // If 'start' is between the reservation's range, return true
+          // If 'end' is between the reservation's range, return true
+          // If 'start' is before the reservation AND 'end' is after, return true
+
+          // range                 v              v
+          // reservation              3AM    6AM
+
+          for (const reservation of reservations) {
+            // If 'start' is in the range
+            if (
+              start.getTime() >= new Date(reservation.start).getTime() &&
+              start.getTime() < new Date(reservation.end).getTime()
+            ) {
+              return reservation;
+            }
+
+            // If 'end' is in the range
+            if (
+              end.getTime() > new Date(reservation.start).getTime() &&
+              end.getTime() <= new Date(reservation.end).getTime()
+            ) {
+              return reservation;
+            }
+
+            // If the range contains the reservation
+            if (
+              start.getTime() <= new Date(reservation.start).getTime() &&
+              end.getTime() >= new Date(reservation.end).getTime()
+            ) {
+              return reservation;
+            }
+          }
+
+          return null;
+        }
+      </script>
+    </main>
+    <footer></footer>
+  </body>
+</html>
